@@ -61,15 +61,14 @@ public partial class OverlayWindow : Window
         _allDesktops = _settings.ShowOnAllDesktops;
         _desktopKeeper = new VirtualDesktopKeeper();
 
-        _tray = new TrayIconController();
+        _tray = new TrayIconController(_settings);
         _tray.ModeSelected += SetMode;
         _tray.AllDesktopsToggled += OnAllDesktopsToggled;
         _tray.ZoomChanged += zoom => SetZoom(zoom);
         _tray.OpacityChanged += SetOpacity;
         _tray.FitRequested += FitToWindow;
-        _tray.DiagnosticsToggled += OnDiagnosticsToggled;
         _tray.ReselectRequested += OnReselectRequested;
-        _tray.LogFolderRequested += OnLogFolderRequested;
+        _tray.LanguageChanged += OnLanguageChanged;
         _tray.ExitRequested += () => (Application.Current as App)?.ExitApp();
 
         _tray.SetMode(_mode);
@@ -182,7 +181,7 @@ public partial class OverlayWindow : Window
         TitleText.Text = BaseTitle(info);
         _tray.SetTooltip($"Win-Mirro-Overlay · {info.Title}");
         SetLiveIndicator(false);
-        ShowStatus("正在连接窗口…", "已启动 Windows Graphics Capture，等待首帧…");
+        ShowStatus(Loc.ConnectingTitle, Loc.ConnectingDetail);
 
         AppLog.Info($"开始镜像：{info.Title}（hwnd=0x{info.Handle.ToInt64():X}, pid={info.ProcessId}）");
 
@@ -197,7 +196,7 @@ public partial class OverlayWindow : Window
         catch (Exception ex)
         {
             AppLog.Error("WGC 启动失败，尝试兼容通道", ex);
-            StartFallback(info, DesktopHint(info) + "Windows Graphics Capture 启动失败：" + ex.Message);
+            StartFallback(info, DesktopHint(info) + "Windows Graphics Capture: " + ex.Message);
         }
     }
 
@@ -254,8 +253,7 @@ public partial class OverlayWindow : Window
         if (_fallbackActive)
         {
             AppLog.Error("兼容通道同样没有画面");
-            ShowStatus("未能抓取到画面",
-                "WGC 和 PrintWindow 都没有拿到画面。\n\n请把日志发给开发者：菜单 → 打开日志文件夹。" + Environment.NewLine + UnsupportedHint);
+            ShowStatus(Loc.NoFrameTitle, Loc.NoFrameDetail + Environment.NewLine + UnsupportedHint);
             return;
         }
 
@@ -268,7 +266,7 @@ public partial class OverlayWindow : Window
         }
 
         AppLog.Warn("WGC 2.5 秒内没有交付任何帧，切换到 PrintWindow 兼容通道");
-        StartFallback(_source, "Windows Graphics Capture 未收到画面，已切换为兼容模式。");
+        StartFallback(_source, Loc.CompatDetail);
     }
 
     private void StartFallback(WindowInfo info, string? reason)
@@ -287,28 +285,26 @@ public partial class OverlayWindow : Window
             _capture = capture;
             capture.Start(info.Handle);
 
-            TitleText.Text = BaseTitle(info) + " · 兼容模式";
-            ShowStatus("正在抓取窗口…", reason ?? "已切换为 PrintWindow 兼容模式。");
+            TitleText.Text = BaseTitle(info) + Loc.CompatSuffix;
+            ShowStatus(Loc.ConnectingTitle, reason ?? Loc.CompatDetail);
             StartWatchdog();
         }
         catch (Exception ex)
         {
             AppLog.Error("PrintWindow 启动失败", ex);
-            ShowStatus("无法开始镜像", DesktopHint(info) + ex.Message + "\n\n" + UnsupportedHint);
+            ShowStatus(Loc.CannotStartTitle, DesktopHint(info) + ex.Message + "\n\n" + UnsupportedHint);
         }
     }
 
     private static string BaseTitle(WindowInfo info)
     {
-        string title = string.IsNullOrWhiteSpace(info.Title) ? "镜像窗口" : info.Title;
-        return info.OnOtherDesktop ? title + " · 其他桌面" : title;
+        string title = string.IsNullOrWhiteSpace(info.Title) ? Loc.MirrorWindow : info.Title;
+        return info.OnOtherDesktop ? title + Loc.OtherDesktopSuffixTitle : title;
     }
 
     private static string DesktopHint(WindowInfo info)
     {
-        return info.OnOtherDesktop
-            ? "该窗口位于其它虚拟桌面，系统通常不允许跨桌面抓取；请先切换到它所在的桌面再试。\n\n"
-            : string.Empty;
+        return info.OnOtherDesktop ? Loc.OtherDesktopHint + "\n\n" : string.Empty;
     }
 
     private void StartPolling(WindowCaptureService capture)
@@ -321,18 +317,6 @@ public partial class OverlayWindow : Window
     {
         _pollTimer?.Dispose();
         _pollTimer = null;
-    }
-
-    private void OnLogFolderRequested()
-    {
-        try
-        {
-            System.Diagnostics.Process.Start("explorer.exe", AppLog.Folder);
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("打开日志目录失败", ex);
-        }
     }
 
     private void OnFrameReady(IWindowCapture capture, CapturedFrame frame)
@@ -381,7 +365,7 @@ public partial class OverlayWindow : Window
                 AppLog.Info($"首帧已上屏：{frame.Width}x{frame.Height}（{(_fallbackActive ? "PrintWindow" : "WGC")}）");
             }
 
-            if (_sourceAlive && !NativeMethods.IsIconic(_source.Handle))
+            if (_sourceAlive && !NativeMethods.IsIconic(_source.Handle) && DateTime.UtcNow >= _statusHoldUntil)
             {
                 HideStatus();
             }
@@ -415,7 +399,7 @@ public partial class OverlayWindow : Window
             _sourceAlive = false;
             _live = false;
             SetLiveIndicator(false);
-            ShowStatus("源窗口已关闭", "可从托盘菜单选择“重新选择源窗口”。");
+            ShowStatus(Loc.SourceClosedTitle, Loc.SourceClosedDetail);
         }));
     }
 
@@ -430,7 +414,7 @@ public partial class OverlayWindow : Window
         {
             _live = false;
             SetLiveIndicator(false);
-            ShowStatus("采集出错", message + "\n\n可把日志发给开发者：托盘菜单 → 打开日志文件夹。" + Environment.NewLine + UnsupportedHint);
+            ShowStatus(Loc.CaptureErrorTitle, message + Environment.NewLine + UnsupportedHint);
         }));
     }
 
@@ -504,8 +488,7 @@ public partial class OverlayWindow : Window
         }
     }
 
-    private const string UnsupportedHint =
-        "提示：受 DRM 保护的视频、部分独占全屏游戏无法被捕获；源窗口最小化时画面会暂停。若一直看不到画面，请在托盘菜单打开日志文件夹。";
+    private static string UnsupportedHint => Loc.UnsupportedHint;
 
     // ---------------------------------------------------------------- 状态检测
 
@@ -521,17 +504,17 @@ public partial class OverlayWindow : Window
             _sourceAlive = false;
             _live = false;
             SetLiveIndicator(false);
-            ShowStatus("源窗口已关闭", "可从托盘菜单选择“重新选择源窗口”。");
+            ShowStatus(Loc.SourceClosedTitle, Loc.SourceClosedDetail);
             return;
         }
 
         if (NativeMethods.IsIconic(_source.Handle))
         {
-            ShowStatus("源窗口已最小化", "还原源窗口后画面会自动恢复。");
+            ShowStatus(Loc.MinimizedTitle, Loc.MinimizedDetail);
             _live = false;
             SetLiveIndicator(false);
         }
-        else if (_live)
+        else if (_live && DateTime.UtcNow >= _statusHoldUntil)
         {
             HideStatus();
         }
@@ -543,6 +526,12 @@ public partial class OverlayWindow : Window
     private void Pin_Click(object sender, RoutedEventArgs e)
     {
         SetMode(_mode == OverlayMode.TopmostClickThrough ? OverlayMode.None : OverlayMode.TopmostClickThrough);
+
+        if (_mode == OverlayMode.TopmostClickThrough)
+        {
+            // 开启穿透后窗口就点不到了，必须告诉用户从哪里恢复。
+            ShowStatus(Loc.PinToastTitle, Loc.PinToastDetail, TimeSpan.FromSeconds(6));
+        }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
@@ -604,11 +593,6 @@ public partial class OverlayWindow : Window
 
     private void ContentHost_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
-        {
-            return;
-        }
-
         e.Handled = true;
         double factor = Math.Pow(1.15, e.Delta / 120.0);
         SetZoom(_zoom * factor, e.GetPosition(ContentHost));
@@ -648,9 +632,9 @@ public partial class OverlayWindow : Window
         PinButton.Foreground = active ? PinOnBrush : PinOffBrush;
         PinButton.ToolTip = _mode switch
         {
-            OverlayMode.TopmostClickThrough => "置顶 + 点击穿透（用托盘菜单取消）",
-            OverlayMode.Topmost => "置顶中，点击切换为点击穿透",
-            _ => "点击置顶并开启穿透",
+            OverlayMode.TopmostClickThrough => Loc.PinTipThrough,
+            OverlayMode.Topmost => Loc.PinTipTopmost,
+            _ => Loc.PinTipNone,
         };
     }
 
@@ -784,30 +768,21 @@ public partial class OverlayWindow : Window
         _panX = left - (viewW - width) / 2;
         _panY = top - (viewH - height) / 2;
 
-        UpdateDiagnosticsText();
         LogLayout(viewW, viewH, dpi, width, height, maxX, maxY);
     }
 
     private DateTime _lastLayoutLog = DateTime.MinValue;
-    private bool _showDiagnostics;
-
-    private void OnDiagnosticsToggled(bool enabled)
+    private DateTime _statusHoldUntil = DateTime.MinValue;
+    private void OnLanguageChanged()
     {
-        _showDiagnostics = enabled;
-        DiagBadge.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-        UpdateDiagnosticsText();
+        RefreshTexts();
     }
 
-    private void UpdateDiagnosticsText()
+    private void RefreshTexts()
     {
-        if (!_showDiagnostics || _bitmap is null)
-        {
-            return;
-        }
-
-        DiagText.Text =
-            $"bitmap {_bitmap.PixelWidth}x{_bitmap.PixelHeight}  view {ContentHost.ActualWidth:0}x{ContentHost.ActualHeight:0}\n" +
-            $"zoom {_zoom * 100:0.#}%  pan {_panX:0.#},{_panY:0.#}  dpi {VisualTreeHelper.GetDpi(this).DpiScaleX:0.##}";
+        TitleText.Text = BaseTitle(_source) + (_fallbackActive ? Loc.CompatSuffix : string.Empty);
+        UpdatePinVisual();
+        _tray.SetTooltip($"Win-Mirro-Overlay · {_source.Title}");
     }
 
     private void LogLayout(double viewW, double viewH, double dpi, double width, double height, double maxX, double maxY)
@@ -942,15 +917,18 @@ public partial class OverlayWindow : Window
         LiveDot.Fill = live ? LiveBrush : IdleBrush;
     }
 
-    private void ShowStatus(string title, string detail)
+    private void ShowStatus(string title, string detail, TimeSpan? hold = null)
     {
         StatusTitle.Text = title;
         StatusDetail.Text = detail;
         StatusOverlay.Visibility = Visibility.Visible;
+        _statusHoldUntil = hold is TimeSpan duration ? DateTime.UtcNow + duration : DateTime.MinValue;
     }
 
     private void HideStatus()
     {
+        _statusHoldUntil = DateTime.MinValue;
+
         if (StatusOverlay.Visibility != Visibility.Collapsed)
         {
             StatusOverlay.Visibility = Visibility.Collapsed;

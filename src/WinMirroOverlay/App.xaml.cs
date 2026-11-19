@@ -20,18 +20,20 @@ public partial class App : Application
         System.Windows.Forms.Application.EnableVisualStyles();
         System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
 
+        Common.Loc.Apply(Services.AppSettings.Load().Language);
+
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
         {
-            MessageBox.Show("本程序需要 Windows 10 1809 (build 17763) 或更高版本。",
-                "Win-Mirro-Overlay", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(Common.Loc.NeedWin10,
+                Common.Loc.AppTitle, MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
             return;
         }
 
         if (!WindowCaptureService.IsSupported)
         {
-            MessageBox.Show("当前系统不支持 Windows.Graphics.Capture，无法采集窗口内容。",
-                "Win-Mirro-Overlay", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(Common.Loc.NoCaptureSupport,
+                Common.Loc.AppTitle, MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
             return;
         }

@@ -33,7 +33,7 @@ public sealed class WindowInfo
         get
         {
             string head = string.IsNullOrEmpty(ProcessName) ? $"PID {ProcessId}" : $"{ProcessName} · PID {ProcessId}";
-            return OnOtherDesktop ? head + " · 其他虚拟桌面" : head;
+            return OnOtherDesktop ? head + " · " + Loc.OtherDesktopSuffix : head;
         }
     }
 }

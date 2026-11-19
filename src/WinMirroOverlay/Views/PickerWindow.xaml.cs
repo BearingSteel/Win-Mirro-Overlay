@@ -19,6 +19,9 @@ public partial class PickerWindow : Window
         InitializeComponent();
 
         Icon = App.LoadAppIconImage();
+
+        Title = Loc.PickerTitle;
+        RefreshButton.Content = Loc.Refresh;
         WindowList.ItemsSource = _items;
 
         Loaded += (_, _) => Refresh();
@@ -60,7 +63,7 @@ public partial class PickerWindow : Window
             _items.Add(window);
         }
 
-        CountText.Text = $"共 {_items.Count} 个可镜像窗口";
+        CountText.Text = string.Format(Loc.CountFormat, _items.Count);
 
         if (_items.Count > 0 && WindowList.SelectedIndex < 0)
         {

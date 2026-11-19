@@ -8,6 +8,9 @@ internal sealed class AppSettings
 {
     public bool ShowOnAllDesktops { get; set; } = true;
 
+    /// <summary>0=跟随系统 1=English 2=简中 3=繁中。</summary>
+    public int Language { get; set; }
+
     public double? Left { get; set; }
 
     public double? Top { get; set; }
