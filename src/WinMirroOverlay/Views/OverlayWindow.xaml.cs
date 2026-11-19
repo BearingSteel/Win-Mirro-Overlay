@@ -401,9 +401,17 @@ public partial class OverlayWindow : Window
         double workHeight = work.Height / dpi;
 
         // 默认 1:1（最多 100%），只有放不下时才等比缩小。
+        // 这里用显式倒序循环，避免 array.Reverse() 在部分 SDK 上绑定到返回 void 的 Span 扩展方法。
         double zoom = 0;
-        foreach (int percent in TrayIconController.ZoomPresets.Reverse().Where(p => p <= 100))
+        int[] presets = TrayIconController.ZoomPresets;
+        for (int i = presets.Length - 1; i >= 0; i--)
         {
+            int percent = presets[i];
+            if (percent > 100)
+            {
+                continue;
+            }
+
             double candidate = percent / 100.0;
             if (sourceWidth * candidate <= workWidth * 0.9
                 && sourceHeight * candidate + TitleBarHeight <= workHeight * 0.9)
