@@ -62,7 +62,7 @@ public partial class OverlayWindow : Window
         _tray.DiagnosticsToggled += OnDiagnosticsToggled;
         _tray.ReselectRequested += OnReselectRequested;
         _tray.LogFolderRequested += OnLogFolderRequested;
-        _tray.ExitRequested += () => Application.Current?.Shutdown();
+        _tray.ExitRequested += () => (Application.Current as App)?.ExitApp();
 
         _tray.SetTopmost(_topmost);
         _tray.SetOpacity(100);
@@ -159,7 +159,7 @@ public partial class OverlayWindow : Window
         _panY = 0;
         FrameImage.Source = null;
 
-        TitleText.Text = string.IsNullOrWhiteSpace(info.Title) ? "镜像窗口" : info.Title;
+        TitleText.Text = BaseTitle(info);
         _tray.SetTooltip($"Win-Mirro-Overlay · {info.Title}");
         SetLiveIndicator(false);
         ShowStatus("正在连接窗口…", "已启动 Windows Graphics Capture，等待首帧…");
@@ -177,7 +177,7 @@ public partial class OverlayWindow : Window
         catch (Exception ex)
         {
             AppLog.Error("WGC 启动失败，尝试兼容通道", ex);
-            StartFallback(info, "Windows Graphics Capture 启动失败：" + ex.Message);
+            StartFallback(info, DesktopHint(info) + "Windows Graphics Capture 启动失败：" + ex.Message);
         }
     }
 
@@ -267,15 +267,28 @@ public partial class OverlayWindow : Window
             _capture = capture;
             capture.Start(info.Handle);
 
-            TitleText.Text = (string.IsNullOrWhiteSpace(info.Title) ? "镜像窗口" : info.Title) + " · 兼容模式";
+            TitleText.Text = BaseTitle(info) + " · 兼容模式";
             ShowStatus("正在抓取窗口…", reason ?? "已切换为 PrintWindow 兼容模式。");
             StartWatchdog();
         }
         catch (Exception ex)
         {
             AppLog.Error("PrintWindow 启动失败", ex);
-            ShowStatus("无法开始镜像", ex.Message + "\n\n" + UnsupportedHint);
+            ShowStatus("无法开始镜像", DesktopHint(info) + ex.Message + "\n\n" + UnsupportedHint);
         }
+    }
+
+    private static string BaseTitle(WindowInfo info)
+    {
+        string title = string.IsNullOrWhiteSpace(info.Title) ? "镜像窗口" : info.Title;
+        return info.OnOtherDesktop ? title + " · 其他桌面" : title;
+    }
+
+    private static string DesktopHint(WindowInfo info)
+    {
+        return info.OnOtherDesktop
+            ? "该窗口位于其它虚拟桌面，系统通常不允许跨桌面抓取；请先切换到它所在的桌面再试。\n\n"
+            : string.Empty;
     }
 
     private void StartPolling(WindowCaptureService capture)

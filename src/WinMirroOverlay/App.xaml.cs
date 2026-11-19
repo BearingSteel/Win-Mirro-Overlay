@@ -10,6 +10,7 @@ public partial class App : Application
 {
     private PickerWindow? _picker;
     private OverlayWindow? _overlay;
+    private bool _exiting;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -41,6 +42,11 @@ public partial class App : Application
     /// <summary>打开“选择窗口”窗口；若已打开则激活它。</summary>
     internal void OpenPicker()
     {
+        if (_exiting || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+        {
+            return;
+        }
+
         if (_picker is not null)
         {
             _picker.Activate();
@@ -95,6 +101,7 @@ public partial class App : Application
 
     internal void ExitApp()
     {
+        _exiting = true;
         Shutdown();
     }
 
@@ -105,10 +112,13 @@ public partial class App : Application
             _overlay = null;
         }
 
-        if (_picker is null)
+        if (_exiting)
         {
-            Shutdown();
+            return;
         }
+
+        // 关闭窗口 2 后回到窗口 1；在 Closed 回调里同步开窗容易出问题，放到下一轮消息循环。
+        Dispatcher.BeginInvoke(new Action(OpenPicker));
     }
 
     internal static BitmapImage LoadAppIconImage()

@@ -29,7 +29,7 @@ internal static class WindowEnumerator
 
         NativeMethods.EnumWindows((hwnd, _) =>
         {
-            if (!IsCandidate(hwnd, selfPid))
+            if (!IsCandidate(hwnd, selfPid, out bool onOtherDesktop))
             {
                 return true;
             }
@@ -54,18 +54,21 @@ internal static class WindowEnumerator
                 processName = string.Empty;
             }
 
-            result.Add(new WindowInfo(hwnd, title, processName, pid, exePath is null ? null : GetIcon(exePath)));
+            result.Add(new WindowInfo(hwnd, title, processName, pid, exePath is null ? null : GetIcon(exePath), onOtherDesktop));
             return true;
         }, IntPtr.Zero);
 
         return result
-            .OrderBy(w => w.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(w => w.OnOtherDesktop)
+            .ThenBy(w => w.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(w => w.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private static bool IsCandidate(IntPtr hwnd, uint selfPid)
+    private static bool IsCandidate(IntPtr hwnd, uint selfPid, out bool onOtherDesktop)
     {
+        onOtherDesktop = false;
+
         if (!NativeMethods.IsWindowVisible(hwnd) || NativeMethods.IsIconic(hwnd))
         {
             return false;
@@ -82,11 +85,18 @@ internal static class WindowEnumerator
             return false;
         }
 
-        // 被 DWM 隐藏（cloaked）的窗口不可见，例如挂起的 UWP 应用。
+        // DWM cloak 标记：1=应用自己隐藏，2=shell 隐藏（含"切换到其它虚拟桌面"），4=继承。
+        // 2 要保留，否则看不到其它虚拟桌面上的窗口。
         if (NativeMethods.DwmGetWindowAttribute(hwnd, NativeMethods.DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0
             && cloaked != 0)
         {
-            return false;
+            const int DwmCloakedShell = 2;
+            if (cloaked != DwmCloakedShell)
+            {
+                return false;
+            }
+
+            onOtherDesktop = true;
         }
 
         var className = GetClassName(hwnd);

@@ -17,7 +17,7 @@
     <Product>Win-Mirro-Overlay</Product>
     <AssemblyTitle>窗口镜像悬浮窗</AssemblyTitle>
     <Description>把任意 Windows 窗口实时镜像为可置顶、可穿透、可缩放的半透明悬浮窗。</Description>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <!-- WPF + WinForms 共用工程时，WinForms 分析器会建议把 DPI 设置移出 manifest；
          WPF 需要 manifest 里的 PerMonitorV2，故忽略该提示。 -->

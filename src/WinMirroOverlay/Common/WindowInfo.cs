@@ -5,13 +5,14 @@ namespace WinMirroOverlay.Common;
 /// <summary>一个可被镜像的顶层窗口。</summary>
 public sealed class WindowInfo
 {
-    public WindowInfo(IntPtr handle, string title, string processName, uint processId, ImageSource? icon)
+    public WindowInfo(IntPtr handle, string title, string processName, uint processId, ImageSource? icon, bool onOtherDesktop = false)
     {
         Handle = handle;
         Title = title;
         ProcessName = processName;
         ProcessId = processId;
         Icon = icon;
+        OnOtherDesktop = onOtherDesktop;
     }
 
     public IntPtr Handle { get; }
@@ -24,5 +25,15 @@ public sealed class WindowInfo
 
     public ImageSource? Icon { get; }
 
-    public string Subtitle => string.IsNullOrEmpty(ProcessName) ? $"PID {ProcessId}" : $"{ProcessName} · PID {ProcessId}";
+    /// <summary>该窗口位于其它虚拟桌面（被 DWM shell cloak）。</summary>
+    public bool OnOtherDesktop { get; }
+
+    public string Subtitle
+    {
+        get
+        {
+            string head = string.IsNullOrEmpty(ProcessName) ? $"PID {ProcessId}" : $"{ProcessName} · PID {ProcessId}";
+            return OnOtherDesktop ? head + " · 其他虚拟桌面" : head;
+        }
+    }
 }
