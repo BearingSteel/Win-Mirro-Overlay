@@ -1,0 +1,35 @@
+name: build-windows
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore Win-Mirro-Overlay.sln
+
+      - name: Build
+        run: dotnet build Win-Mirro-Overlay.sln -c Release --no-restore
+
+      - name: Publish (framework-dependent, win-x64)
+        run: dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 --self-contained false -o publish
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinMirroOverlay-win-x64
+          path: publish/
+          if-no-files-found: error

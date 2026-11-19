@@ -1,0 +1,22 @@
+# build output
+bin/
+obj/
+publish/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IDE
+.vs/
+.idea/
+*.DotSettings.user
+
+# local toolchain / scratch (used when building on non-Windows machines)
+.dotnet/
+.dotnet-home/
+.nuget/
+.tmp/
+.xdg/
+.scratch/
+dotnet-install.sh

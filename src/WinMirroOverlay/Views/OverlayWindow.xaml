@@ -1,0 +1,76 @@
+<Window x:Class="WinMirroOverlay.Views.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Win-Mirro-Overlay"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="CanResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        MinWidth="220" MinHeight="120"
+        Width="760" Height="460"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        FontSize="12"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display">
+
+    <Border x:Name="RootBorder"
+            CornerRadius="8"
+            Background="#E6101217"
+            BorderBrush="#40FFFFFF"
+            BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="34" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Grid x:Name="TitleBar" Background="Transparent"
+                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Ellipse x:Name="LiveDot" Width="7" Height="7" Fill="#48D597"
+                         Margin="12,0,8,0" VerticalAlignment="Center" />
+
+                <TextBlock x:Name="TitleText" Grid.Column="1" VerticalAlignment="Center"
+                           Foreground="#D6DDEA" TextTrimming="CharacterEllipsis"
+                           Text="镜像窗口" />
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal"
+                            VerticalAlignment="Center" Margin="8,0,4,0">
+                    <TextBlock x:Name="ZoomText" Text="100%" Foreground="#8E9AAE"
+                               VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <Button x:Name="PinButton" Style="{StaticResource ChromeButton}"
+                            Content="&#xE718;" ToolTip="置顶显示" Click="Pin_Click" />
+                    <Button x:Name="CloseButton" Style="{StaticResource ChromeButton}"
+                            Content="&#xE8BB;" ToolTip="关闭" Click="Close_Click" />
+                </StackPanel>
+            </Grid>
+
+            <Grid x:Name="ContentHost" Grid.Row="1" Background="#00000000"
+                  ClipToBounds="True"
+                  MouseLeftButtonDown="ContentHost_MouseLeftButtonDown">
+                <Image x:Name="FrameImage" Stretch="Fill"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       RenderOptions.BitmapScalingMode="Linear" />
+
+                <Border x:Name="StatusOverlay" Background="#E60B0D12" Visibility="Collapsed">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24">
+                        <TextBlock x:Name="StatusTitle" Text="正在连接窗口…" FontSize="15"
+                                   HorizontalAlignment="Center" />
+                        <TextBlock x:Name="StatusDetail" Margin="0,8,0,0" MaxWidth="440"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   TextWrapping="Wrap" TextAlignment="Center" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

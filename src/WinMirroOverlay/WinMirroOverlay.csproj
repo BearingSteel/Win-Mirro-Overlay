@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>WinMirroOverlay</RootNamespace>
+    <AssemblyName>WinMirroOverlay</AssemblyName>
+    <ApplicationIcon>..\..\assets\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 允许在非 Windows 机器上执行 dotnet build（CI / 交叉编译），Windows 上无副作用 -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Product>Win-Mirro-Overlay</Product>
+    <AssemblyTitle>窗口镜像悬浮窗</AssemblyTitle>
+    <Description>把任意 Windows 窗口实时镜像为可置顶、可穿透、可缩放的半透明悬浮窗。</Description>
+    <Version>1.0.0</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- WPF + WinForms 共用工程时，WinForms 分析器会建议把 DPI 设置移出 manifest；
+         WPF 需要 manifest 里的 PerMonitorV2，故忽略该提示。 -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\assets\app.ico" Link="assets\app.ico" />
+  </ItemGroup>
+
+  <!-- UseWPF + UseWindowsForms 会同时注入 System.Windows 与 System.Windows.Forms 的全局 using，
+       这里去掉 WinForms 的两个，避免 Application/Brush/KeyEventArgs 等类型二义性。 -->
+  <ItemGroup>
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+</Project>
