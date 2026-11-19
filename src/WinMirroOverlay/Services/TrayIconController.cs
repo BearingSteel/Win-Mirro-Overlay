@@ -1,26 +1,32 @@
 using System.Drawing;
 using System.Windows.Forms;
+using WinMirroOverlay.Common;
 
 namespace WinMirroOverlay.Services;
 
 /// <summary>托盘图标与右键菜单（左键点击也会弹出同一菜单）。</summary>
 internal sealed class TrayIconController : IDisposable
 {
-    public static readonly int[] OpacityPresets = { 100, 90, 75, 50, 25 };
-
     private const double MinZoom = 0.10;
     private const double MaxZoom = 10.0;
+    private const int MinOpacityPercent = 10;
 
     private readonly NotifyIcon _notifyIcon;
     private readonly Icon _iconImage;
     private readonly ContextMenuStrip _menu;
-    private readonly ToolStripMenuItem _topmostItem;
-    private readonly ToolStripMenuItem _clickThroughItem;
+
+    private readonly ToolStripMenuItem _modeTopmost;
+    private readonly ToolStripMenuItem _modeTopmostThrough;
+    private readonly ToolStripMenuItem _modeNone;
+
     private readonly ToolStripMenuItem _zoomHeaderItem;
-    private readonly ToolStripMenuItem _opacityItem;
     private readonly TrackBar _zoomTrack;
-    private readonly Dictionary<int, ToolStripMenuItem> _opacityItems = new();
+
+    private readonly ToolStripMenuItem _opacityHeaderItem;
+    private readonly TrackBar _opacityTrack;
+
     private bool _updatingZoom;
+    private bool _updatingOpacity;
 
     public TrayIconController()
     {
@@ -34,33 +40,17 @@ internal sealed class TrayIconController : IDisposable
             ShowImageMargin = true,
         };
 
-        _topmostItem = new ToolStripMenuItem("置顶显示：关");
-        _topmostItem.Click += (_, _) => TopmostToggled?.Invoke(!_topmostItem.Checked);
+        _modeTopmost = new ToolStripMenuItem("置顶");
+        _modeTopmost.Click += (_, _) => ModeSelected?.Invoke(OverlayMode.Topmost);
 
-        _clickThroughItem = new ToolStripMenuItem("点击穿透：关");
-        _clickThroughItem.Click += (_, _) => ClickThroughToggled?.Invoke(!_clickThroughItem.Checked);
+        _modeTopmostThrough = new ToolStripMenuItem("置顶（点击穿透）");
+        _modeTopmostThrough.Click += (_, _) => ModeSelected?.Invoke(OverlayMode.TopmostClickThrough);
+
+        _modeNone = new ToolStripMenuItem("取消置顶");
+        _modeNone.Click += (_, _) => ModeSelected?.Invoke(OverlayMode.None);
 
         _zoomHeaderItem = new ToolStripMenuItem("缩放：100%");
-
-        var zoomPanel = new Panel
-        {
-            Width = 250,
-            Height = 34,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty,
-        };
-
-        _zoomTrack = new TrackBar
-        {
-            Minimum = 0,
-            Maximum = 1000,
-            SmallChange = 10,
-            LargeChange = 100,
-            TickStyle = TickStyle.None,
-            Dock = DockStyle.Fill,
-            Value = ZoomToTrack(1.0),
-        };
-
+        var zoomHost = CreateSliderHost(0, 1000, ZoomToTrack(1.0), out _zoomTrack, out var zoomPanel);
         _zoomTrack.ValueChanged += (_, _) =>
         {
             if (_updatingZoom)
@@ -72,26 +62,24 @@ internal sealed class TrayIconController : IDisposable
             _zoomHeaderItem.Text = $"缩放：{Math.Round(zoom * 100)}%";
             ZoomChanged?.Invoke(zoom);
         };
-
         zoomPanel.Controls.Add(_zoomTrack);
 
-        var zoomHost = new ToolStripControlHost(zoomPanel)
+        _opacityHeaderItem = new ToolStripMenuItem("透明度：100%");
+        var opacityHost = CreateSliderHost(MinOpacityPercent, 100, 100, out _opacityTrack, out var opacityPanel);
+        _opacityTrack.ValueChanged += (_, _) =>
         {
-            AutoSize = false,
-            Width = 250,
-            Height = 34,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty,
-        };
+            if (_updatingOpacity)
+            {
+                return;
+            }
 
-        _opacityItem = new ToolStripMenuItem("透明度：100%");
-        foreach (int percent in OpacityPresets)
-        {
-            var item = new ToolStripMenuItem($"{percent}%") { Tag = percent };
-            item.Click += (_, _) => OpacitySelected?.Invoke(percent);
-            _opacityItems[percent] = item;
-            _opacityItem.DropDownItems.Add(item);
-        }
+            _opacityHeaderItem.Text = $"透明度：{_opacityTrack.Value}%";
+            OpacityChanged?.Invoke(_opacityTrack.Value / 100.0);
+        };
+        opacityPanel.Controls.Add(_opacityTrack);
+
+        var fitItem = new ToolStripMenuItem("适应窗口（重置缩放与位置）");
+        fitItem.Click += (_, _) => FitRequested?.Invoke();
 
         var diagItem = new ToolStripMenuItem("显示诊断信息");
         diagItem.Click += (_, _) =>
@@ -99,9 +87,6 @@ internal sealed class TrayIconController : IDisposable
             diagItem.Checked = !diagItem.Checked;
             DiagnosticsToggled?.Invoke(diagItem.Checked);
         };
-
-        var fitItem = new ToolStripMenuItem("适应窗口（重置缩放与位置）");
-        fitItem.Click += (_, _) => FitRequested?.Invoke();
 
         var reselectItem = new ToolStripMenuItem("重新选择源窗口");
         reselectItem.Click += (_, _) => ReselectRequested?.Invoke();
@@ -114,17 +99,19 @@ internal sealed class TrayIconController : IDisposable
 
         _menu.Items.AddRange(new ToolStripItem[]
         {
-            _topmostItem,
-            _clickThroughItem,
+            _modeTopmost,
+            _modeTopmostThrough,
+            _modeNone,
             new ToolStripSeparator(),
             _zoomHeaderItem,
             zoomHost,
+            _opacityHeaderItem,
+            opacityHost,
             fitItem,
-            diagItem,
-            _opacityItem,
             new ToolStripSeparator(),
             reselectItem,
             logItem,
+            diagItem,
             exitItem,
         });
 
@@ -146,14 +133,13 @@ internal sealed class TrayIconController : IDisposable
         };
     }
 
-    public event Action<bool>? TopmostToggled;
-
-    public event Action<bool>? ClickThroughToggled;
+    public event Action<OverlayMode>? ModeSelected;
 
     /// <summary>缩放比例（0.1 - 10.0）。</summary>
     public event Action<double>? ZoomChanged;
 
-    public event Action<int>? OpacitySelected;
+    /// <summary>不透明度（0.1 - 1.0）。</summary>
+    public event Action<double>? OpacityChanged;
 
     public event Action? FitRequested;
 
@@ -165,16 +151,11 @@ internal sealed class TrayIconController : IDisposable
 
     public event Action? ExitRequested;
 
-    public void SetTopmost(bool topmost)
+    public void SetMode(OverlayMode mode)
     {
-        _topmostItem.Checked = topmost;
-        _topmostItem.Text = topmost ? "置顶显示：开" : "置顶显示：关";
-    }
-
-    public void SetClickThrough(bool enabled)
-    {
-        _clickThroughItem.Checked = enabled;
-        _clickThroughItem.Text = enabled ? "点击穿透：开" : "点击穿透：关";
+        _modeTopmost.Checked = mode == OverlayMode.Topmost;
+        _modeTopmostThrough.Checked = mode == OverlayMode.TopmostClickThrough;
+        _modeNone.Checked = mode == OverlayMode.None;
     }
 
     public void SetZoom(double zoom)
@@ -186,14 +167,15 @@ internal sealed class TrayIconController : IDisposable
         _zoomHeaderItem.Text = $"缩放：{Math.Round(zoom * 100)}%";
     }
 
-    public void SetOpacity(int percent)
+    public void SetOpacity(double opacity)
     {
-        foreach (var (key, item) in _opacityItems)
-        {
-            item.Checked = key == percent;
-        }
+        int percent = Math.Clamp((int)Math.Round(opacity * 100), _opacityTrack.Minimum, _opacityTrack.Maximum);
 
-        _opacityItem.Text = $"透明度：{percent}%";
+        _updatingOpacity = true;
+        _opacityTrack.Value = percent;
+        _updatingOpacity = false;
+
+        _opacityHeaderItem.Text = $"透明度：{percent}%";
     }
 
     public void SetTooltip(string text)
@@ -207,6 +189,38 @@ internal sealed class TrayIconController : IDisposable
         _notifyIcon.Dispose();
         _menu.Dispose();
         _iconImage.Dispose();
+    }
+
+    private static ToolStripControlHost CreateSliderHost(
+        int minimum, int maximum, int value, out TrackBar track, out Panel panel)
+    {
+        panel = new Panel
+        {
+            Width = 250,
+            Height = 34,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+        };
+
+        track = new TrackBar
+        {
+            Minimum = minimum,
+            Maximum = maximum,
+            SmallChange = Math.Max(1, (maximum - minimum) / 100),
+            LargeChange = Math.Max(5, (maximum - minimum) / 10),
+            TickStyle = TickStyle.None,
+            Dock = DockStyle.Fill,
+            Value = value,
+        };
+
+        return new ToolStripControlHost(panel)
+        {
+            AutoSize = false,
+            Width = 250,
+            Height = 34,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+        };
     }
 
     private static double TrackToZoom(int value)

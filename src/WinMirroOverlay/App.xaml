@@ -74,6 +74,7 @@
         <!-- 窗口列表项 -->
         <Style x:Key="PickItemStyle" TargetType="ListBoxItem">
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="4,2" />
             <Setter Property="Template">

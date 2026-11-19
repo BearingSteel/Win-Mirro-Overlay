@@ -8,11 +8,10 @@ using WinMirroOverlay.Interop;
 
 namespace WinMirroOverlay.Views;
 
-/// <summary>窗口 1：列出当前可镜像的顶层窗口，单击某项即开始镜像。</summary>
+/// <summary>窗口 1：列出所有可镜像的顶层窗口，单击某项即开始镜像。</summary>
 public partial class PickerWindow : Window
 {
-    private readonly ObservableCollection<WindowInfo> _all = new();
-    private readonly ObservableCollection<WindowInfo> _filtered = new();
+    private readonly ObservableCollection<WindowInfo> _items = new();
     private bool _selected;
 
     public PickerWindow()
@@ -20,7 +19,7 @@ public partial class PickerWindow : Window
         InitializeComponent();
 
         Icon = App.LoadAppIconImage();
-        WindowList.ItemsSource = _filtered;
+        WindowList.ItemsSource = _items;
 
         Loaded += (_, _) => Refresh();
         PreviewKeyDown += OnPreviewKeyDown;
@@ -55,45 +54,18 @@ public partial class PickerWindow : Window
     {
         var windows = WindowEnumerator.Enumerate();
 
-        _all.Clear();
+        _items.Clear();
         foreach (var window in windows)
         {
-            _all.Add(window);
+            _items.Add(window);
         }
 
-        ApplyFilter();
-    }
+        CountText.Text = $"共 {_items.Count} 个可镜像窗口";
 
-    private void ApplyFilter()
-    {
-        string keyword = SearchBox.Text.Trim();
-
-        _filtered.Clear();
-        foreach (var window in _all)
-        {
-            if (keyword.Length == 0
-                || window.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                || window.ProcessName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-            {
-                _filtered.Add(window);
-            }
-        }
-
-        CountText.Text = keyword.Length == 0
-            ? $"共 {_filtered.Count} 个可镜像窗口"
-            : $"匹配 {_filtered.Count} / {_all.Count} 个窗口";
-
-        if (_filtered.Count > 0 && WindowList.SelectedIndex < 0)
+        if (_items.Count > 0 && WindowList.SelectedIndex < 0)
         {
             WindowList.SelectedIndex = 0;
         }
-    }
-
-    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        bool empty = SearchBox.Text.Length == 0;
-        SearchPlaceholder.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
-        ApplyFilter();
     }
 
     private void WindowList_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -137,7 +109,7 @@ public partial class PickerWindow : Window
             return;
         }
 
-        // 防止 WGC 不支持该窗口时反复触发。
+        // 防止同一次点击重复触发。
         _selected = true;
         WindowSelected?.Invoke(this, info);
     }

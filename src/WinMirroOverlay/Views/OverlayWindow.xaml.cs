@@ -41,7 +41,7 @@ public partial class OverlayWindow : Window
     private bool _panning;
     private Point _panStartPoint;
     private Vector _panStartValue;
-    private bool _topmost = true;
+    private OverlayMode _mode = OverlayMode.Topmost;
     private bool _clickThrough;
     private bool _sourceAlive = true;
     private bool _live;
@@ -54,18 +54,17 @@ public partial class OverlayWindow : Window
         Icon = App.LoadAppIconImage();
 
         _tray = new TrayIconController();
-        _tray.TopmostToggled += SetTopmost;
-        _tray.ClickThroughToggled += SetClickThrough;
+        _tray.ModeSelected += SetMode;
         _tray.ZoomChanged += zoom => SetZoom(zoom);
-        _tray.OpacitySelected += percent => SetOpacity(percent / 100.0);
+        _tray.OpacityChanged += SetOpacity;
         _tray.FitRequested += FitToWindow;
         _tray.DiagnosticsToggled += OnDiagnosticsToggled;
         _tray.ReselectRequested += OnReselectRequested;
         _tray.LogFolderRequested += OnLogFolderRequested;
         _tray.ExitRequested += () => (Application.Current as App)?.ExitApp();
 
-        _tray.SetTopmost(_topmost);
-        _tray.SetOpacity(100);
+        _tray.SetMode(_mode);
+        _tray.SetOpacity(1.0);
         _tray.SetZoom(1.0);
 
         _stateTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, OnStateTimer, Dispatcher);
@@ -448,7 +447,11 @@ public partial class OverlayWindow : Window
 
     // ---------------------------------------------------------------- 交互
 
-    private void Pin_Click(object sender, RoutedEventArgs e) => SetTopmost(!_topmost);
+    // 钉子按钮 = 直接切到「置顶（点击穿透）」。
+    private void Pin_Click(object sender, RoutedEventArgs e)
+    {
+        SetMode(_mode == OverlayMode.TopmostClickThrough ? OverlayMode.None : OverlayMode.TopmostClickThrough);
+    }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
@@ -536,24 +539,32 @@ public partial class OverlayWindow : Window
         }
     }
 
-    private void SetTopmost(bool topmost)
+    private void SetMode(OverlayMode mode)
     {
-        _topmost = topmost;
-        Topmost = topmost;
-        _tray.SetTopmost(topmost);
+        _mode = mode;
+
+        Topmost = mode != OverlayMode.None;
+        ApplyClickThrough(mode == OverlayMode.TopmostClickThrough);
+
+        _tray.SetMode(mode);
         UpdatePinVisual();
     }
 
     private void UpdatePinVisual()
     {
-        PinButton.Foreground = _topmost ? PinOnBrush : PinOffBrush;
-        PinButton.ToolTip = _topmost ? "取消置顶" : "置顶显示";
+        bool active = _mode != OverlayMode.None;
+        PinButton.Foreground = active ? PinOnBrush : PinOffBrush;
+        PinButton.ToolTip = _mode switch
+        {
+            OverlayMode.TopmostClickThrough => "置顶 + 点击穿透（用托盘菜单取消）",
+            OverlayMode.Topmost => "置顶中，点击切换为点击穿透",
+            _ => "点击置顶并开启穿透",
+        };
     }
 
-    private void SetClickThrough(bool enabled)
+    private void ApplyClickThrough(bool enabled)
     {
         _clickThrough = enabled;
-        _tray.SetClickThrough(enabled);
 
         IntPtr handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero)
@@ -569,7 +580,7 @@ public partial class OverlayWindow : Window
         NativeMethods.SetWindowLongPtr(handle, NativeMethods.GWL_EXSTYLE, new IntPtr(newStyle));
     }
 
-    /// <summary>把缩放调回"刚好放下 + 居中"的状态。</summary>
+    /// <summary>把缩放调回「刚好放下 + 居中」的状态。</summary>
     private void FitToWindow()
     {
         if (_bitmap is null)
@@ -585,7 +596,10 @@ public partial class OverlayWindow : Window
         }
 
         double dpi = Math.Max(0.1, VisualTreeHelper.GetDpi(this).DpiScaleX);
-        double fit = Math.Min(1.0, Math.Min(viewW / (_bitmap.PixelWidth / dpi), viewH / (_bitmap.PixelHeight / dpi)));
+        double fit = Math.Min(
+            1.0,
+            Math.Min(viewW * dpi / _bitmap.PixelWidth, viewH * dpi / _bitmap.PixelHeight));
+
         _zoom = Math.Clamp(fit, 0.1, 10.0);
         _panX = 0;
         _panY = 0;
@@ -618,8 +632,8 @@ public partial class OverlayWindow : Window
 
     private void SetOpacity(double opacity)
     {
-        Opacity = Math.Clamp(opacity, 0.05, 1.0);
-        _tray.SetOpacity((int)Math.Round(Opacity * 100));
+        Opacity = Math.Clamp(opacity, 0.1, 1.0);
+        _tray.SetOpacity(Opacity);
     }
 
     private void UpdateContentLayout()
