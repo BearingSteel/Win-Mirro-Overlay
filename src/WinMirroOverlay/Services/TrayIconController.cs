@@ -18,6 +18,7 @@ internal sealed class TrayIconController : IDisposable
     private readonly ToolStripMenuItem _modeTopmost;
     private readonly ToolStripMenuItem _modeTopmostThrough;
     private readonly ToolStripMenuItem _modeNone;
+    private readonly ToolStripMenuItem _allDesktopsItem;
 
     private readonly ToolStripMenuItem _zoomHeaderItem;
     private readonly TrackBar _zoomTrack;
@@ -48,6 +49,9 @@ internal sealed class TrayIconController : IDisposable
 
         _modeNone = new ToolStripMenuItem("取消置顶");
         _modeNone.Click += (_, _) => ModeSelected?.Invoke(OverlayMode.None);
+
+        _allDesktopsItem = new ToolStripMenuItem("所有桌面显示") { Checked = true };
+        _allDesktopsItem.Click += (_, _) => AllDesktopsToggled?.Invoke(!_allDesktopsItem.Checked);
 
         _zoomHeaderItem = new ToolStripMenuItem("缩放：100%");
         var zoomHost = CreateSliderHost(0, 1000, ZoomToTrack(1.0), out _zoomTrack, out var zoomPanel);
@@ -103,6 +107,8 @@ internal sealed class TrayIconController : IDisposable
             _modeTopmostThrough,
             _modeNone,
             new ToolStripSeparator(),
+            _allDesktopsItem,
+            new ToolStripSeparator(),
             _zoomHeaderItem,
             zoomHost,
             _opacityHeaderItem,
@@ -135,6 +141,8 @@ internal sealed class TrayIconController : IDisposable
 
     public event Action<OverlayMode>? ModeSelected;
 
+    public event Action<bool>? AllDesktopsToggled;
+
     /// <summary>缩放比例（0.1 - 10.0）。</summary>
     public event Action<double>? ZoomChanged;
 
@@ -157,6 +165,8 @@ internal sealed class TrayIconController : IDisposable
         _modeTopmostThrough.Checked = mode == OverlayMode.TopmostClickThrough;
         _modeNone.Checked = mode == OverlayMode.None;
     }
+
+    public void SetAllDesktops(bool enabled) => _allDesktopsItem.Checked = enabled;
 
     public void SetZoom(double zoom)
     {

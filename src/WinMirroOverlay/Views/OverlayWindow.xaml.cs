@@ -25,6 +25,10 @@ public partial class OverlayWindow : Window
     private static readonly Brush IdleBrush = CreateBrush("#8E9AAE");
 
     private readonly TrayIconController _tray;
+    private readonly VirtualDesktopKeeper _desktopKeeper;
+    private readonly AppSettings _settings;
+    private bool _allDesktops;
+    private bool _autoFitPending;
     private readonly DispatcherTimer _stateTimer;
 
     private WindowInfo _source;
@@ -53,8 +57,13 @@ public partial class OverlayWindow : Window
         _source = source;
         Icon = App.LoadAppIconImage();
 
+        _settings = AppSettings.Load();
+        _allDesktops = _settings.ShowOnAllDesktops;
+        _desktopKeeper = new VirtualDesktopKeeper();
+
         _tray = new TrayIconController();
         _tray.ModeSelected += SetMode;
+        _tray.AllDesktopsToggled += OnAllDesktopsToggled;
         _tray.ZoomChanged += zoom => SetZoom(zoom);
         _tray.OpacityChanged += SetOpacity;
         _tray.FitRequested += FitToWindow;
@@ -64,6 +73,7 @@ public partial class OverlayWindow : Window
         _tray.ExitRequested += () => (Application.Current as App)?.ExitApp();
 
         _tray.SetMode(_mode);
+        _tray.SetAllDesktops(_allDesktops);
         _tray.SetOpacity(1.0);
         _tray.SetZoom(1.0);
 
@@ -116,8 +126,16 @@ public partial class OverlayWindow : Window
         _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         _hwndSource?.AddHook(WndProc);
 
+        _desktopKeeper.Attach(new WindowInteropHelper(this).Handle);
+        _desktopKeeper.Enabled = _allDesktops;
+
         UpdatePinVisual();
-        ConfigureInitialGeometry();
+
+        if (!TryRestoreBounds())
+        {
+            ConfigureInitialGeometry();
+        }
+
         StartCapture(_source);
         _stateTimer.Start();
     }
@@ -132,6 +150,9 @@ public partial class OverlayWindow : Window
             _hwndSource = null;
         }
 
+        SaveBounds();
+        _desktopKeeper.Dispose();
+
         StopCapture();
         _tray.Dispose();
     }
@@ -139,7 +160,7 @@ public partial class OverlayWindow : Window
     public void Retarget(WindowInfo info)
     {
         StartCapture(info);
-        ConfigureInitialGeometry();
+        _autoFitPending = true;
         Activate();
     }
 
@@ -339,7 +360,16 @@ public partial class OverlayWindow : Window
             {
                 _bitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Bgr32, null);
                 FrameImage.Source = _bitmap;
-                UpdateContentLayout();
+
+                if (_autoFitPending)
+                {
+                    _autoFitPending = false;
+                    FitToWindow();
+                }
+                else
+                {
+                    UpdateContentLayout();
+                }
             }
 
             _bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), frame.Pixels, frame.Stride, 0);
@@ -402,6 +432,68 @@ public partial class OverlayWindow : Window
             SetLiveIndicator(false);
             ShowStatus("采集出错", message + "\n\n可把日志发给开发者：托盘菜单 → 打开日志文件夹。" + Environment.NewLine + UnsupportedHint);
         }));
+    }
+
+    private void OnAllDesktopsToggled(bool enabled)
+    {
+        _allDesktops = enabled;
+        _desktopKeeper.Enabled = enabled;
+        _tray.SetAllDesktops(enabled);
+
+        _settings.ShowOnAllDesktops = enabled;
+        _settings.Save();
+
+        AppLog.Info("所有桌面显示：" + (enabled ? "开启" : "关闭"));
+    }
+
+    private bool TryRestoreBounds()
+    {
+        if (_settings.Left is not double left || _settings.Top is not double top
+            || _settings.Width is not double width || _settings.Height is not double height)
+        {
+            return false;
+        }
+
+        if (width < MinWidth || height < MinHeight)
+        {
+            return false;
+        }
+
+        // 至少要有 40dip 落在虚拟屏幕内，避免显示器变化后窗口跑到看不见的地方。
+        double screenLeft = SystemParameters.VirtualScreenLeft;
+        double screenTop = SystemParameters.VirtualScreenTop;
+        double screenRight = screenLeft + SystemParameters.VirtualScreenWidth;
+        double screenBottom = screenTop + SystemParameters.VirtualScreenHeight;
+
+        if (left + width < screenLeft + 40 || top + height < screenTop + 40
+            || left > screenRight - 40 || top > screenBottom - 40)
+        {
+            return false;
+        }
+
+        Left = left;
+        Top = top;
+        Width = width;
+        Height = height;
+        _autoFitPending = true;
+
+        AppLog.Info($"恢复窗口位置：({left:0},{top:0}) {width:0}x{height:0}");
+        return true;
+    }
+
+    private void SaveBounds()
+    {
+        if (WindowState != WindowState.Normal)
+        {
+            return;
+        }
+
+        _settings.Left = Left;
+        _settings.Top = Top;
+        _settings.Width = Width;
+        _settings.Height = Height;
+        _settings.ShowOnAllDesktops = _allDesktops;
+        _settings.Save();
     }
 
     private void OnReselectRequested()
@@ -791,6 +883,12 @@ public partial class OverlayWindow : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (msg == NativeMethods.WM_EXITSIZEMOVE)
+        {
+            SaveBounds();
+            return IntPtr.Zero;
+        }
+
         if (msg != NativeMethods.WM_NCHITTEST || _clickThrough)
         {
             return IntPtr.Zero;
