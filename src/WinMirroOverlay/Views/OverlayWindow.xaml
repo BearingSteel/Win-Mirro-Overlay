@@ -67,6 +67,14 @@
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        RenderOptions.BitmapScalingMode="Linear" />
 
+                <Border x:Name="DiagBadge" Background="#B3000000" CornerRadius="4"
+                        HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                        Margin="6" Padding="6,3" Visibility="Collapsed"
+                        IsHitTestVisible="False">
+                    <TextBlock x:Name="DiagText" FontSize="11" Foreground="#9FE8FF"
+                               FontFamily="Consolas" />
+                </Border>
+
                 <Border x:Name="StatusOverlay" Background="#E60B0D12" Visibility="Collapsed">
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24">
                         <TextBlock x:Name="StatusTitle" Text="正在连接窗口…" FontSize="15"

@@ -35,7 +35,6 @@ public partial class OverlayWindow : Window
     private WriteableBitmap? _bitmap;
     private HwndSource? _hwndSource;
 
-    private readonly TranslateTransform _translate = new();
     private double _zoom = 1.0;
     private double _panX;
     private double _panY;
@@ -59,6 +58,8 @@ public partial class OverlayWindow : Window
         _tray.ClickThroughToggled += SetClickThrough;
         _tray.ZoomChanged += zoom => SetZoom(zoom);
         _tray.OpacitySelected += percent => SetOpacity(percent / 100.0);
+        _tray.FitRequested += FitToWindow;
+        _tray.DiagnosticsToggled += OnDiagnosticsToggled;
         _tray.ReselectRequested += OnReselectRequested;
         _tray.LogFolderRequested += OnLogFolderRequested;
         _tray.ExitRequested += () => Application.Current?.Shutdown();
@@ -66,8 +67,6 @@ public partial class OverlayWindow : Window
         _tray.SetTopmost(_topmost);
         _tray.SetOpacity(100);
         _tray.SetZoom(1.0);
-
-        FrameImage.RenderTransform = _translate;
 
         _stateTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, OnStateTimer, Dispatcher);
 
@@ -557,6 +556,30 @@ public partial class OverlayWindow : Window
         NativeMethods.SetWindowLongPtr(handle, NativeMethods.GWL_EXSTYLE, new IntPtr(newStyle));
     }
 
+    /// <summary>把缩放调回"刚好放下 + 居中"的状态。</summary>
+    private void FitToWindow()
+    {
+        if (_bitmap is null)
+        {
+            return;
+        }
+
+        double viewW = ContentHost.ActualWidth;
+        double viewH = ContentHost.ActualHeight;
+        if (viewW < 1 || viewH < 1)
+        {
+            return;
+        }
+
+        double dpi = Math.Max(0.1, VisualTreeHelper.GetDpi(this).DpiScaleX);
+        double fit = Math.Min(1.0, Math.Min(viewW / (_bitmap.PixelWidth / dpi), viewH / (_bitmap.PixelHeight / dpi)));
+        _zoom = Math.Clamp(fit, 0.1, 10.0);
+        _panX = 0;
+        _panY = 0;
+        UpdateContentLayout();
+        _tray.SetZoom(_zoom);
+    }
+
     private void SetZoom(double zoom, Point? anchor = null)
     {
         double target = Math.Clamp(zoom, 0.1, 10.0);
@@ -595,6 +618,20 @@ public partial class OverlayWindow : Window
             return;
         }
 
+        double viewW = ContentHost.ActualWidth;
+        double viewH = ContentHost.ActualHeight;
+
+        // 个别情况下 Grid 的 ActualSize 可能还是 0（尚未完成布局），退回窗口尺寸。
+        if (viewW < 1)
+        {
+            viewW = Math.Max(1, ActualWidth - 2);
+        }
+
+        if (viewH < 1)
+        {
+            viewH = Math.Max(1, ActualHeight - TitleBarHeight - 2);
+        }
+
         double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
         if (dpi <= 0)
         {
@@ -604,17 +641,68 @@ public partial class OverlayWindow : Window
         double width = _bitmap.PixelWidth * _zoom / dpi;
         double height = _bitmap.PixelHeight * _zoom / dpi;
 
-        FrameImage.Width = width;
-        FrameImage.Height = height;
-
-        // 内容比视口小的时候居中不动；比视口大时限制平移范围，避免拖出空白。
-        double maxX = Math.Max(0, (width - ContentHost.ActualWidth) / 2);
-        double maxY = Math.Max(0, (height - ContentHost.ActualHeight) / 2);
+        // 内容比视口小时居中；比视口大时把平移量钳制在"边缘对齐"范围内。
+        double maxX = Math.Max(0, (width - viewW) / 2);
+        double maxY = Math.Max(0, (height - viewH) / 2);
         _panX = Math.Clamp(_panX, -maxX, maxX);
         _panY = Math.Clamp(_panY, -maxY, maxY);
 
-        _translate.X = _panX;
-        _translate.Y = _panY;
+        double left = (viewW - width) / 2 + _panX;
+        double top = (viewH - height) / 2 + _panY;
+
+        // 再对最终位置做一次兜底钳制：大图不允许露出底色，小图强制居中。
+        left = width >= viewW ? Math.Clamp(left, viewW - width, 0) : (viewW - width) / 2;
+        top = height >= viewH ? Math.Clamp(top, viewH - height, 0) : (viewH - height) / 2;
+
+        // 用布局位置（Margin）而不是 RenderTransform 定位：分层窗口在高倍率下
+        // 对超大元素的变换渲染容易出空洞，布局定位没有这个问题。
+        FrameImage.Width = width;
+        FrameImage.Height = height;
+        FrameImage.HorizontalAlignment = HorizontalAlignment.Left;
+        FrameImage.VerticalAlignment = VerticalAlignment.Top;
+        FrameImage.Margin = new Thickness(left, top, 0, 0);
+
+        _panX = left - (viewW - width) / 2;
+        _panY = top - (viewH - height) / 2;
+
+        UpdateDiagnosticsText();
+        LogLayout(viewW, viewH, dpi, width, height, maxX, maxY);
+    }
+
+    private DateTime _lastLayoutLog = DateTime.MinValue;
+    private bool _showDiagnostics;
+
+    private void OnDiagnosticsToggled(bool enabled)
+    {
+        _showDiagnostics = enabled;
+        DiagBadge.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        UpdateDiagnosticsText();
+    }
+
+    private void UpdateDiagnosticsText()
+    {
+        if (!_showDiagnostics || _bitmap is null)
+        {
+            return;
+        }
+
+        DiagText.Text =
+            $"bitmap {_bitmap.PixelWidth}x{_bitmap.PixelHeight}  view {ContentHost.ActualWidth:0}x{ContentHost.ActualHeight:0}\n" +
+            $"zoom {_zoom * 100:0.#}%  pan {_panX:0.#},{_panY:0.#}  dpi {VisualTreeHelper.GetDpi(this).DpiScaleX:0.##}";
+    }
+
+    private void LogLayout(double viewW, double viewH, double dpi, double width, double height, double maxX, double maxY)
+    {
+        DateTime now = DateTime.UtcNow;
+        if ((now - _lastLayoutLog).TotalSeconds < 1)
+        {
+            return;
+        }
+
+        _lastLayoutLog = now;
+        AppLog.Info(
+            $"布局：视口={viewW:0}x{viewH:0}dip dpi={dpi:0.##} 位图={_bitmap!.PixelWidth}x{_bitmap.PixelHeight} " +
+            $"缩放={_zoom:0.###} 内容={width:0}x{height:0} 平移上限={maxX:0}x{maxY:0} 平移={_panX:0}x{_panY:0}");
     }
 
     private void UpdateZoomText()

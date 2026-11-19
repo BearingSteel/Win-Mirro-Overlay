@@ -93,6 +93,16 @@ internal sealed class TrayIconController : IDisposable
             _opacityItem.DropDownItems.Add(item);
         }
 
+        var diagItem = new ToolStripMenuItem("显示诊断信息");
+        diagItem.Click += (_, _) =>
+        {
+            diagItem.Checked = !diagItem.Checked;
+            DiagnosticsToggled?.Invoke(diagItem.Checked);
+        };
+
+        var fitItem = new ToolStripMenuItem("适应窗口（重置缩放与位置）");
+        fitItem.Click += (_, _) => FitRequested?.Invoke();
+
         var reselectItem = new ToolStripMenuItem("重新选择源窗口");
         reselectItem.Click += (_, _) => ReselectRequested?.Invoke();
 
@@ -109,6 +119,8 @@ internal sealed class TrayIconController : IDisposable
             new ToolStripSeparator(),
             _zoomHeaderItem,
             zoomHost,
+            fitItem,
+            diagItem,
             _opacityItem,
             new ToolStripSeparator(),
             reselectItem,
@@ -142,6 +154,10 @@ internal sealed class TrayIconController : IDisposable
     public event Action<double>? ZoomChanged;
 
     public event Action<int>? OpacitySelected;
+
+    public event Action? FitRequested;
+
+    public event Action<bool>? DiagnosticsToggled;
 
     public event Action? ReselectRequested;
 
