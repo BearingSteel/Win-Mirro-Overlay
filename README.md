@@ -104,7 +104,8 @@ dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 
 
 ```
 Win-Mirro-Overlay.sln
-assets/app.ico                 # 应用与托盘图标（tools/make_icon.py 生成）
+assets/logo.svg                # logo 设计源（512x512）
+assets/app.ico                 # 应用与托盘图标（tools/make_icon.py 按 logo.svg 生成）
 src/WinMirroOverlay/
   App.xaml(.cs)                # 启动流程：选择窗口 → 悬浮窗
   app.manifest                 # PerMonitorV2 DPI
