@@ -35,7 +35,13 @@ public partial class OverlayWindow : Window
     private WriteableBitmap? _bitmap;
     private HwndSource? _hwndSource;
 
+    private readonly TranslateTransform _translate = new();
     private double _zoom = 1.0;
+    private double _panX;
+    private double _panY;
+    private bool _panning;
+    private Point _panStartPoint;
+    private Vector _panStartValue;
     private bool _topmost = true;
     private bool _clickThrough;
     private bool _sourceAlive = true;
@@ -51,7 +57,7 @@ public partial class OverlayWindow : Window
         _tray = new TrayIconController();
         _tray.TopmostToggled += SetTopmost;
         _tray.ClickThroughToggled += SetClickThrough;
-        _tray.ZoomSelected += percent => SetZoom(percent / 100.0);
+        _tray.ZoomChanged += zoom => SetZoom(zoom);
         _tray.OpacitySelected += percent => SetOpacity(percent / 100.0);
         _tray.ReselectRequested += OnReselectRequested;
         _tray.LogFolderRequested += OnLogFolderRequested;
@@ -59,7 +65,9 @@ public partial class OverlayWindow : Window
 
         _tray.SetTopmost(_topmost);
         _tray.SetOpacity(100);
-        _tray.SetZoom(100);
+        _tray.SetZoom(1.0);
+
+        FrameImage.RenderTransform = _translate;
 
         _stateTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, OnStateTimer, Dispatcher);
 
@@ -67,10 +75,42 @@ public partial class OverlayWindow : Window
         Closed += OnClosed;
     }
 
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+        {
+            base.OnPreviewKeyDown(e);
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.D0:
+            case Key.NumPad0:
+                SetZoom(1.0);
+                e.Handled = true;
+                return;
+
+            case Key.OemPlus:
+            case Key.Add:
+                SetZoom(_zoom * 1.15);
+                e.Handled = true;
+                return;
+
+            case Key.OemMinus:
+            case Key.Subtract:
+                SetZoom(_zoom / 1.15);
+                e.Handled = true;
+                return;
+        }
+
+        base.OnPreviewKeyDown(e);
+    }
+
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
         base.OnDpiChanged(oldDpi, newDpi);
-        ApplyZoomSize();
+        UpdateContentLayout();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -116,6 +156,8 @@ public partial class OverlayWindow : Window
         _live = false;
         _fallbackActive = false;
         _bitmap = null;
+        _panX = 0;
+        _panY = 0;
         FrameImage.Source = null;
 
         TitleText.Text = string.IsNullOrWhiteSpace(info.Title) ? "镜像窗口" : info.Title;
@@ -286,7 +328,7 @@ public partial class OverlayWindow : Window
             {
                 _bitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Bgr32, null);
                 FrameImage.Source = _bitmap;
-                ApplyZoomSize();
+                UpdateContentLayout();
             }
 
             _bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), frame.Pixels, frame.Stride, 0);
@@ -317,7 +359,7 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        Dispatcher.BeginInvoke(new Action(ApplyZoomSize));
+        Dispatcher.BeginInvoke(new Action(UpdateContentLayout));
     }
 
     private void OnSourceClosed()
@@ -400,7 +442,70 @@ public partial class OverlayWindow : Window
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => TryDrag();
 
-    private void ContentHost_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => TryDrag();
+    // 画面内拖拽 = 平移画面（不是移动窗口）。
+    private void ContentHost_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_clickThrough || _bitmap is null)
+        {
+            return;
+        }
+
+        _panning = true;
+        _panStartPoint = e.GetPosition(ContentHost);
+        _panStartValue = new Vector(_panX, _panY);
+
+        if (ContentHost.CaptureMouse())
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void ContentHost_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_panning)
+        {
+            return;
+        }
+
+        Point current = e.GetPosition(ContentHost);
+        Vector delta = current - _panStartPoint;
+        _panX = _panStartValue.X + delta.X;
+        _panY = _panStartValue.Y + delta.Y;
+        UpdateContentLayout();
+    }
+
+    private void ContentHost_MouseLeftButtonUp(object sender, MouseButtonEventArgs e) => EndPan();
+
+    private void ContentHost_LostMouseCapture(object sender, MouseEventArgs e) => EndPan();
+
+    private void EndPan()
+    {
+        if (!_panning)
+        {
+            return;
+        }
+
+        _panning = false;
+
+        if (ContentHost.IsMouseCaptured)
+        {
+            ContentHost.ReleaseMouseCapture();
+        }
+    }
+
+    private void ContentHost_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateContentLayout();
+
+    private void ContentHost_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        double factor = Math.Pow(1.15, e.Delta / 120.0);
+        SetZoom(_zoom * factor, e.GetPosition(ContentHost));
+    }
 
     private void TryDrag()
     {
@@ -452,11 +557,27 @@ public partial class OverlayWindow : Window
         NativeMethods.SetWindowLongPtr(handle, NativeMethods.GWL_EXSTYLE, new IntPtr(newStyle));
     }
 
-    private void SetZoom(double zoom)
+    private void SetZoom(double zoom, Point? anchor = null)
     {
-        _zoom = Math.Clamp(zoom, 0.1, 4.0);
-        ApplyZoomSize();
-        _tray.SetZoom((int)Math.Round(_zoom * 100));
+        double target = Math.Clamp(zoom, 0.1, 10.0);
+        if (Math.Abs(target - _zoom) < 0.0001)
+        {
+            return;
+        }
+
+        if (anchor is Point point)
+        {
+            // 以光标为锚点缩放：保持光标下的画面位置不变。
+            double ratio = target / _zoom;
+            double cx = ContentHost.ActualWidth / 2;
+            double cy = ContentHost.ActualHeight / 2;
+            _panX = point.X - cx - (point.X - cx - _panX) * ratio;
+            _panY = point.Y - cy - (point.Y - cy - _panY) * ratio;
+        }
+
+        _zoom = target;
+        UpdateContentLayout();
+        _tray.SetZoom(_zoom);
     }
 
     private void SetOpacity(double opacity)
@@ -465,7 +586,7 @@ public partial class OverlayWindow : Window
         _tray.SetOpacity((int)Math.Round(Opacity * 100));
     }
 
-    private void ApplyZoomSize()
+    private void UpdateContentLayout()
     {
         UpdateZoomText();
 
@@ -480,8 +601,20 @@ public partial class OverlayWindow : Window
             dpi = 1.0;
         }
 
-        FrameImage.Width = _bitmap.PixelWidth * _zoom / dpi;
-        FrameImage.Height = _bitmap.PixelHeight * _zoom / dpi;
+        double width = _bitmap.PixelWidth * _zoom / dpi;
+        double height = _bitmap.PixelHeight * _zoom / dpi;
+
+        FrameImage.Width = width;
+        FrameImage.Height = height;
+
+        // 内容比视口小的时候居中不动；比视口大时限制平移范围，避免拖出空白。
+        double maxX = Math.Max(0, (width - ContentHost.ActualWidth) / 2);
+        double maxY = Math.Max(0, (height - ContentHost.ActualHeight) / 2);
+        _panX = Math.Clamp(_panX, -maxX, maxX);
+        _panY = Math.Clamp(_panY, -maxY, maxY);
+
+        _translate.X = _panX;
+        _translate.Y = _panY;
     }
 
     private void UpdateZoomText()
@@ -511,34 +644,15 @@ public partial class OverlayWindow : Window
         double workWidth = work.Width / dpi;
         double workHeight = work.Height / dpi;
 
-        // 默认 1:1（最多 100%），只有放不下时才等比缩小。
-        // 这里用显式倒序循环，避免 array.Reverse() 在部分 SDK 上绑定到返回 void 的 Span 扩展方法。
-        double zoom = 0;
-        int[] presets = TrayIconController.ZoomPresets;
-        for (int i = presets.Length - 1; i >= 0; i--)
-        {
-            int percent = presets[i];
-            if (percent > 100)
-            {
-                continue;
-            }
-
-            double candidate = percent / 100.0;
-            if (sourceWidth * candidate <= workWidth * 0.9
-                && sourceHeight * candidate + TitleBarHeight <= workHeight * 0.9)
-            {
-                zoom = candidate;
-                break;
-            }
-        }
-
-        if (zoom <= 0)
-        {
-            zoom = Math.Min(workWidth * 0.9 / sourceWidth, (workHeight - TitleBarHeight) * 0.9 / sourceHeight);
-            zoom = Math.Clamp(zoom, 0.15, 1.0);
-        }
+        // 默认 1:1，只有在工作区放不下时才等比缩小（最低 10%）。
+        double zoom = Math.Min(1.0, Math.Min(
+            workWidth * 0.9 / sourceWidth,
+            (workHeight - TitleBarHeight) * 0.9 / sourceHeight));
+        zoom = Math.Clamp(zoom, 0.1, 1.0);
 
         _zoom = zoom;
+        _panX = 0;
+        _panY = 0;
 
         double width = Math.Max(MinWidth, sourceWidth * zoom);
         double height = Math.Max(MinHeight, sourceHeight * zoom + TitleBarHeight);
@@ -554,8 +668,8 @@ public partial class OverlayWindow : Window
         Width = width;
         Height = height;
 
-        _tray.SetZoom((int)Math.Round(zoom * 100));
-        ApplyZoomSize();
+        _tray.SetZoom(zoom);
+        UpdateContentLayout();
     }
 
     // ---------------------------------------------------------------- 无边框窗口命中测试

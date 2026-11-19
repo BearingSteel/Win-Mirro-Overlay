@@ -56,7 +56,13 @@
 
             <Grid x:Name="ContentHost" Grid.Row="1" Background="#00000000"
                   ClipToBounds="True"
-                  MouseLeftButtonDown="ContentHost_MouseLeftButtonDown">
+                  Cursor="SizeAll"
+                  SizeChanged="ContentHost_SizeChanged"
+                  PreviewMouseWheel="ContentHost_PreviewMouseWheel"
+                  MouseLeftButtonDown="ContentHost_MouseLeftButtonDown"
+                  MouseMove="ContentHost_MouseMove"
+                  MouseLeftButtonUp="ContentHost_MouseLeftButtonUp"
+                  LostMouseCapture="ContentHost_LostMouseCapture">
                 <Image x:Name="FrameImage" Stretch="Fill"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        RenderOptions.BitmapScalingMode="Linear" />
