@@ -19,7 +19,7 @@ public partial class OverlayWindow : Window
     private const int ResizeBorder = 6;
     private const double TitleBarHeight = 34;
 
-    private static readonly Brush PinOnBrush = CreateBrush("#4CC2FF");
+    private static readonly Brush PinOnBrush = CreateBrush("#2DD4EF");
     private static readonly Brush PinOffBrush = CreateBrush("#C7D0DE");
     private static readonly Brush LiveBrush = CreateBrush("#48D597");
     private static readonly Brush IdleBrush = CreateBrush("#8E9AAE");

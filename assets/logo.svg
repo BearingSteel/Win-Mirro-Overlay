@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 悬浮监视屏幕：唯一大轮廓，粗描边 -->
+  <rect x="80" y="72" width="352" height="256" rx="56"
+        fill="none" stroke="#2DD4EF" stroke-width="36"/>
+
+  <!-- 监视镜头：唯一实心焦点 -->
+  <circle cx="256" cy="200" r="64" fill="#2DD4EF"/>
+
+  <!-- 镜像倒影 / 悬浮投影：一条短线，暗示悬浮与镜像 -->
+  <rect x="176" y="408" width="160" height="32" rx="16"
+        fill="#2DD4EF" opacity="0.45"/>
+</svg>

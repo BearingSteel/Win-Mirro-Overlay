@@ -8,7 +8,7 @@
         <SolidColorBrush x:Key="BorderBrush" Color="#2C313B" />
         <SolidColorBrush x:Key="TextBrush" Color="#E8ECF3" />
         <SolidColorBrush x:Key="MutedBrush" Color="#98A2B3" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#4CC2FF" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#2DD4EF" />
         <SolidColorBrush x:Key="AccentSoftBrush" Color="#334CC2FF" />
 
         <!-- 标题栏小图标按钮 -->
