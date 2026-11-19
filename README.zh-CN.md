@@ -55,13 +55,25 @@ dotnet run --project src/WinMirroOverlay/WinMirroOverlay.csproj
 dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 --self-contained false -o publish
 ```
 
-单文件、免运行时：
+单文件、免运行时（Release 里的 exe 就是这么打出来的）：
 
 ```powershell
-dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish-standalone
+dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 `
+  --self-contained true -p:PublishSingleFile=true `
+  -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+  -o publish-standalone
 ```
 
-预编译压缩包见 GitHub Releases；每次推送也会生成 Actions artifact。
+### 下载
+
+每个 [Release](https://github.com/BearingSteel/Win-Mirro-Overlay/releases) 提供两个文件：
+
+| 文件 | 是否需要 .NET 8 | 说明 |
+| --- | --- | --- |
+| `WinMirroOverlay-vX.Y.Z-win-x64.exe` | 不需要 | 自包含单文件（约 70 MB），双击即用 |
+| `WinMirroOverlay-vX.Y.Z-win-x64.zip` | 需要 | 依赖框架的版本（exe + 若干 DLL，约 7 MB） |
+
+每次推送也会生成 Actions artifact。
 
 ## 使用流程
 

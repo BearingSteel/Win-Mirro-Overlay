@@ -59,13 +59,25 @@ Publish (framework-dependent, `win-x64`):
 dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 --self-contained false -o publish
 ```
 
-Self-contained single file:
+Self-contained single file (what the release `.exe` is built from):
 
 ```powershell
-dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish-standalone
+dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 `
+  --self-contained true -p:PublishSingleFile=true `
+  -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+  -o publish-standalone
 ```
 
-Prebuilt zips are attached to GitHub Releases; every push also produces an Actions artifact.
+### Downloads
+
+Each [release](https://github.com/BearingSteel/Win-Mirro-Overlay/releases) ships two files:
+
+| File | Needs .NET 8? | Notes |
+| --- | --- | --- |
+| `WinMirroOverlay-vX.Y.Z-win-x64.exe` | No | Self-contained single file (~70 MB), just double-click |
+| `WinMirroOverlay-vX.Y.Z-win-x64.zip` | Yes | Framework-dependent build (exe + DLLs, ~7 MB) |
+
+Every push also produces an Actions artifact.
 
 ## Usage
 
