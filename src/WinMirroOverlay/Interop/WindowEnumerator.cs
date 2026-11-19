@@ -157,6 +157,21 @@ internal static class WindowEnumerator
         return image;
     }
 
+    /// <summary>窗口的可见外框（物理像素），排除 DWM 阴影留白。</summary>
+    public static NativeMethods.RECT GetVisibleBounds(IntPtr hwnd)
+    {
+        NativeMethods.RECT bounds;
+        if (NativeMethods.DwmGetWindowAttribute(
+                hwnd, NativeMethods.DWMWA_EXTENDED_FRAME_BOUNDS, out bounds, System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.RECT>()) == 0
+            && bounds.Width > 0 && bounds.Height > 0)
+        {
+            return bounds;
+        }
+
+        NativeMethods.GetWindowRect(hwnd, out var rect);
+        return rect;
+    }
+
     /// <summary>返回窗口所在显示器的工作区（物理像素）。</summary>
     public static NativeMethods.RECT GetWorkAreaForWindow(IntPtr hwnd)
     {

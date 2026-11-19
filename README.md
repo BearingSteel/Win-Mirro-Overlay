@@ -85,10 +85,17 @@ dotnet publish src/WinMirroOverlay/WinMirroOverlay.csproj -c Release -r win-x64 
 ## 实现要点
 
 - **采集**：`Windows.Graphics.Capture`（WGC）+ D3D11。WGC 取的是窗口合成后的内容，源窗口被其它窗口遮挡时依然能镜像；帧通过 `ID3D11Texture2D` → staging 纹理 → `Map` 拷到 CPU，再写入 `WriteableBitmap`，限制在约 30fps 以免空耗 CPU。
+- **三级兜底**：WGC `FrameArrived` 事件在个别机器上不触发 → 2.5 秒后主动从帧池轮询取帧；帧池也取不到 → 自动切到 `PrintWindow(PW_RENDERFULLCONTENT)` 兼容通道（标题栏会显示「· 兼容模式」）。
 - **悬浮窗**：WPF 无边框窗口 + `AllowsTransparency`（本身就是分层窗口），因此能把 `WS_EX_TRANSPARENT` 直接加上去做真正的跨进程鼠标穿透；整体透明度用 `Window.Opacity`。
 - **为什么不直接用 DWM 缩略图**：`DwmRegisterThumbnail` 往分层窗口上投射并不可靠，而穿透/半透明都必须依赖分层窗口，所以改走「采集 + 自绘」这条路。
 - **无边框窗口的缩放/拖动**：自己处理 `WM_NCHITTEST` 返回 `HTLEFT/HTTOP...`，拖动走 `DragMove()`（内部是 `WM_NCLBUTTONDOWN + HTCAPTION`，因此保留系统贴边/吸附行为）。
 - **进程内互操作**：`RoGetActivationFactory` 取 `GraphicsCaptureItem` 的激活工厂 → QI 出 `IGraphicsCaptureItemInterop` → `CreateForWindow`；WinRT 对象到托管对象用 CsWinRT 的 `FromAbi`（会接管引用，不能再 `Release`）。
+
+## 排查日志
+
+程序会把关键步骤写到 `%LOCALAPPDATA%\Win-Mirro-Overlay\app.log`（`开始镜像 / WGC 启动 / 首帧 / QI 失败 / 切换通道 / 停止` 等）。
+
+托盘菜单里的「打开日志文件夹」可以直接打开该目录；反馈问题时把这个 `app.log` 发出来即可。
 
 ## 已知限制
 

@@ -28,7 +28,10 @@ public partial class OverlayWindow : Window
     private readonly DispatcherTimer _stateTimer;
 
     private WindowInfo _source;
-    private WindowCaptureService? _capture;
+    private IWindowCapture? _capture;
+    private DispatcherTimer? _watchdog;
+    private System.Threading.Timer? _pollTimer;
+    private bool _fallbackActive;
     private WriteableBitmap? _bitmap;
     private HwndSource? _hwndSource;
 
@@ -51,6 +54,7 @@ public partial class OverlayWindow : Window
         _tray.ZoomSelected += percent => SetZoom(percent / 100.0);
         _tray.OpacitySelected += percent => SetOpacity(percent / 100.0);
         _tray.ReselectRequested += OnReselectRequested;
+        _tray.LogFolderRequested += OnLogFolderRequested;
         _tray.ExitRequested += () => Application.Current?.Shutdown();
 
         _tray.SetTopmost(_topmost);
@@ -110,34 +114,45 @@ public partial class OverlayWindow : Window
         _source = info;
         _sourceAlive = true;
         _live = false;
+        _fallbackActive = false;
         _bitmap = null;
         FrameImage.Source = null;
 
         TitleText.Text = string.IsNullOrWhiteSpace(info.Title) ? "镜像窗口" : info.Title;
         _tray.SetTooltip($"Win-Mirro-Overlay · {info.Title}");
         SetLiveIndicator(false);
-        ShowStatus("正在连接窗口…", info.Title);
+        ShowStatus("正在连接窗口…", "已启动 Windows Graphics Capture，等待首帧…");
+
+        AppLog.Info($"开始镜像：{info.Title}（hwnd=0x{info.Handle.ToInt64():X}, pid={info.ProcessId}）");
 
         try
         {
             var capture = new WindowCaptureService();
-            capture.FrameReady += frame => OnFrameReady(capture, frame);
-            capture.CapturedSizeChanged += OnCapturedSizeChanged;
-            capture.SourceClosed += OnSourceClosed;
-            capture.Failed += OnCaptureFailed;
+            WireCapture(capture);
             _capture = capture;
-
             capture.Start(info.Handle);
+            StartWatchdog();
         }
         catch (Exception ex)
         {
-            StopCapture();
-            ShowStatus("无法开始镜像", ex.Message + "\n\n" + UnsupportedHint);
+            AppLog.Error("WGC 启动失败，尝试兼容通道", ex);
+            StartFallback(info, "Windows Graphics Capture 启动失败：" + ex.Message);
         }
+    }
+
+    private void WireCapture(IWindowCapture capture)
+    {
+        capture.FrameReady += frame => OnFrameReady(capture, frame);
+        capture.CapturedSizeChanged += OnCapturedSizeChanged;
+        capture.SourceClosed += OnSourceClosed;
+        capture.Failed += OnCaptureFailed;
     }
 
     private void StopCapture()
     {
+        StopWatchdog();
+        StopPolling();
+
         if (_capture is null)
         {
             return;
@@ -151,7 +166,102 @@ public partial class OverlayWindow : Window
         _capture = null;
     }
 
-    private void OnFrameReady(WindowCaptureService capture, CapturedFrame frame)
+    /// <summary>WGC 在部分机器/窗口上会"会话已启动但永远不来帧"，超时后切到兼容通道。</summary>
+    private void StartWatchdog()
+    {
+        StopWatchdog();
+        _watchdog = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(2500), DispatcherPriority.Background, OnWatchdog, Dispatcher);
+        _watchdog.Start();
+    }
+
+    private void StopWatchdog()
+    {
+        _watchdog?.Stop();
+        _watchdog = null;
+    }
+
+    private void OnWatchdog(object? sender, EventArgs e)
+    {
+        StopWatchdog();
+
+        if (_live || !_sourceAlive)
+        {
+            return;
+        }
+
+        if (_fallbackActive)
+        {
+            AppLog.Error("兼容通道同样没有画面");
+            ShowStatus("未能抓取到画面",
+                "WGC 和 PrintWindow 都没有拿到画面。\n\n请把日志发给开发者：菜单 → 打开日志文件夹。" + Environment.NewLine + UnsupportedHint);
+            return;
+        }
+
+        // 事件没触发不代表帧池里没有帧：先主动取一次，能取到就改成轮询。
+        if (_capture is WindowCaptureService wgc && wgc.PollOnce())
+        {
+            AppLog.Warn("FrameArrived 事件未触发，但帧池可取到帧：改用轮询取帧");
+            StartPolling(wgc);
+            return;
+        }
+
+        AppLog.Warn("WGC 2.5 秒内没有交付任何帧，切换到 PrintWindow 兼容通道");
+        StartFallback(_source, "Windows Graphics Capture 未收到画面，已切换为兼容模式。");
+    }
+
+    private void StartFallback(WindowInfo info, string? reason)
+    {
+        StopCapture();
+
+        _source = info;
+        _sourceAlive = true;
+        _live = false;
+        _fallbackActive = true;
+
+        try
+        {
+            var capture = new PrintWindowCapture();
+            WireCapture(capture);
+            _capture = capture;
+            capture.Start(info.Handle);
+
+            TitleText.Text = (string.IsNullOrWhiteSpace(info.Title) ? "镜像窗口" : info.Title) + " · 兼容模式";
+            ShowStatus("正在抓取窗口…", reason ?? "已切换为 PrintWindow 兼容模式。");
+            StartWatchdog();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("PrintWindow 启动失败", ex);
+            ShowStatus("无法开始镜像", ex.Message + "\n\n" + UnsupportedHint);
+        }
+    }
+
+    private void StartPolling(WindowCaptureService capture)
+    {
+        StopPolling();
+        _pollTimer = new System.Threading.Timer(_ => capture.PollOnce(), null, 0, 33);
+    }
+
+    private void StopPolling()
+    {
+        _pollTimer?.Dispose();
+        _pollTimer = null;
+    }
+
+    private void OnLogFolderRequested()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start("explorer.exe", AppLog.Folder);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("打开日志目录失败", ex);
+        }
+    }
+
+    private void OnFrameReady(IWindowCapture capture, CapturedFrame frame)
     {
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
         {
@@ -162,7 +272,7 @@ public partial class OverlayWindow : Window
         Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => RenderFrame(capture, frame)));
     }
 
-    private void RenderFrame(WindowCaptureService capture, CapturedFrame frame)
+    private void RenderFrame(IWindowCapture capture, CapturedFrame frame)
     {
         try
         {
@@ -185,6 +295,7 @@ public partial class OverlayWindow : Window
             {
                 _live = true;
                 SetLiveIndicator(true);
+                AppLog.Info($"首帧已上屏：{frame.Width}x{frame.Height}（{(_fallbackActive ? "PrintWindow" : "WGC")}）");
             }
 
             if (_sourceAlive && !NativeMethods.IsIconic(_source.Handle))
@@ -236,7 +347,7 @@ public partial class OverlayWindow : Window
         {
             _live = false;
             SetLiveIndicator(false);
-            ShowStatus("采集出错", message + "\n\n" + UnsupportedHint);
+            ShowStatus("采集出错", message + "\n\n可把日志发给开发者：托盘菜单 → 打开日志文件夹。" + Environment.NewLine + UnsupportedHint);
         }));
     }
 
@@ -249,7 +360,7 @@ public partial class OverlayWindow : Window
     }
 
     private const string UnsupportedHint =
-        "提示：受 DRM 保护的视频、部分独占全屏游戏无法被捕获；源窗口最小化时画面会暂停。";
+        "提示：受 DRM 保护的视频、部分独占全屏游戏无法被捕获；源窗口最小化时画面会暂停。若一直看不到画面，请在托盘菜单打开日志文件夹。";
 
     // ---------------------------------------------------------------- 状态检测
 

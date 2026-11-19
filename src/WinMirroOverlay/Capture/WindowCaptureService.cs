@@ -7,6 +7,7 @@ using Windows.Graphics;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using Windows.Graphics.DirectX.Direct3D11;
+using WinMirroOverlay.Common;
 
 namespace WinMirroOverlay.Capture;
 
@@ -14,7 +15,7 @@ namespace WinMirroOverlay.Capture;
 /// 用 Windows.Graphics.Capture 实时抓取某个顶层窗口的内容，
 /// 通过 D3D11 staging 纹理读到 CPU，交给 UI 线程绘制。
 /// </summary>
-internal sealed class WindowCaptureService : IDisposable
+internal sealed class WindowCaptureService : IWindowCapture
 {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(33); // ~30fps
 
@@ -33,7 +34,12 @@ internal sealed class WindowCaptureService : IDisposable
     private int _width;
     private int _height;
     private int _nextSlot;
+    private int _frameCount;
+    private int _deliveredCount;
     private long _lastDeliveryTicks;
+    private bool _loggedFirstFrame;
+    private bool _loggedQiFailure;
+    private bool _loggedNullFrame;
     private volatile bool _disposed;
 
     public static bool IsSupported => GraphicsCaptureSession.IsSupported();
@@ -53,13 +59,17 @@ internal sealed class WindowCaptureService : IDisposable
             throw new PlatformNotSupportedException("当前系统不支持 Windows.Graphics.Capture（需要 Windows 10 1809 及以上）。");
         }
 
+        AppLog.Info($"WGC 启动：hwnd=0x{hwnd.ToInt64():X}");
+
         try
         {
             _device = D3D11.D3D11CreateDevice(
                 DriverType.Hardware, DeviceCreationFlags.BgraSupport, new[] { FeatureLevel.Level_11_0 });
+            AppLog.Info("WGC D3D11 设备已创建（硬件）");
         }
-        catch
+        catch (Exception ex)
         {
+            AppLog.Warn($"硬件设备创建失败，改用 WARP：{ex.Message}");
             _device = D3D11.D3D11CreateDevice(
                 DriverType.Warp, DeviceCreationFlags.BgraSupport, new[] { FeatureLevel.Level_11_0 });
         }
@@ -69,7 +79,10 @@ internal sealed class WindowCaptureService : IDisposable
         using (var dxgiDevice = _device.QueryInterface<IDXGIDevice>())
         {
             int hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.NativePointer, out IntPtr inspectable);
-            Marshal.ThrowExceptionForHR(hr);
+            if (hr < 0)
+            {
+                throw new InvalidOperationException($"CreateDirect3D11DeviceFromDXGIDevice 失败：hr=0x{hr:X8}");
+            }
 
             // FromAbi 接管 inspectable 的引用（CreateDirect3D11DeviceFromDXGIDevice 返回时引用计数为 1），
             // 不能再 Marshal.Release，否则会提前释放。
@@ -80,6 +93,8 @@ internal sealed class WindowCaptureService : IDisposable
         _item.Closed += OnItemClosed;
 
         SizeInt32 size = _item.Size;
+        AppLog.Info($"WGC 捕获项已创建：size={size.Width}x{size.Height} name={_item.DisplayName}");
+
         if (size.Width <= 0 || size.Height <= 0)
         {
             throw new InvalidOperationException("目标窗口当前没有可捕获的尺寸。");
@@ -94,12 +109,15 @@ internal sealed class WindowCaptureService : IDisposable
             ApplySizeLocked(size.Width, size.Height);
         }
 
+        AppLog.Info("WGC 帧池已创建（自由线程，2 缓冲）");
+
         _session = _pool!.CreateCaptureSession(_item);
         _session.IsCursorCaptureEnabled = false;
         _session.StartCapture();
+
+        AppLog.Info("WGC 会话已启动，等待首帧");
     }
 
-    /// <summary>UI 线程绘制完一帧后归还槽位。</summary>
     public void Release(int slot)
     {
         lock (_sync)
@@ -160,6 +178,7 @@ internal sealed class WindowCaptureService : IDisposable
             frame.Stride = stride;
         }
 
+        AppLog.Info($"WGC staging 纹理：{width}x{height} stride={stride}");
         CapturedSizeChanged?.Invoke(width, height);
     }
 
@@ -183,56 +202,109 @@ internal sealed class WindowCaptureService : IDisposable
             }
             catch (Exception ex)
             {
+                AppLog.Error("WGC 取帧异常", ex);
                 Failed?.Invoke(ex.Message);
             }
         }
     }
 
-    private void HandleFrameLocked(Direct3D11CaptureFramePool sender)
+    /// <summary>
+    /// 主动从帧池取一帧（用于 FrameArrived 事件在个别机器上不触发时的兜底轮询）。
+    /// 返回 true 表示成功拷贝并交付了一帧。
+    /// </summary>
+    public bool PollOnce()
     {
+        if (_disposed)
+        {
+            return false;
+        }
+
+        lock (_sync)
+        {
+            if (_disposed || _pool is null)
+            {
+                return false;
+            }
+
+            try
+            {
+                return HandleFrameLocked(_pool);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("WGC 轮询取帧异常", ex);
+                Failed?.Invoke(ex.Message);
+                return false;
+            }
+        }
+    }
+
+    private bool HandleFrameLocked(Direct3D11CaptureFramePool sender)
+    {
+        _frameCount++;
+
         using Direct3D11CaptureFrame? frame = sender.TryGetNextFrame();
         if (frame is null)
         {
-            return;
+            if (!_loggedNullFrame)
+            {
+                _loggedNullFrame = true;
+                AppLog.Warn($"WGC FrameArrived 触发但 TryGetNextFrame 返回 null（第 {_frameCount} 次）");
+            }
+
+            return false;
         }
 
         SizeInt32 contentSize = frame.ContentSize;
+        if (!_loggedFirstFrame)
+        {
+            _loggedFirstFrame = true;
+            AppLog.Info($"WGC 首帧：content={contentSize.Width}x{contentSize.Height} staging={_width}x{_height}");
+        }
+
         if (contentSize.Width <= 0 || contentSize.Height <= 0)
         {
-            return;
+            return false;
         }
 
         if (contentSize.Width != _width || contentSize.Height != _height)
         {
-            // 源窗口改变了大小：重建 staging 纹理与帧池。
+            AppLog.Info($"WGC 源窗口尺寸变化：{_width}x{_height} -> {contentSize.Width}x{contentSize.Height}");
             ApplySizeLocked(contentSize.Width, contentSize.Height);
             sender.Recreate(_winrtDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, contentSize);
-            return;
+            return false;
         }
 
         long now = Stopwatch.GetTimestamp();
         long minTicks = FrameInterval.Ticks * Stopwatch.Frequency / TimeSpan.TicksPerSecond;
         if (now - _lastDeliveryTicks < minTicks)
         {
-            return;
+            return false;
         }
 
         int slot = _nextSlot;
         if (_busy[slot])
         {
-            return; // UI 还没画完上一帧，丢弃这一帧
+            return false; // UI 还没画完上一帧，丢弃这一帧
         }
 
         if (!CopyToBufferLocked(frame, _frames[slot]))
         {
-            return;
+            return false;
         }
 
         _busy[slot] = true;
         _lastDeliveryTicks = now;
         _nextSlot ^= 1;
 
+        if (_deliveredCount == 0)
+        {
+            AppLog.Info("WGC 首帧已拷到 CPU，交给 UI");
+        }
+
+        _deliveredCount++;
         FrameReady?.Invoke(_frames[slot]);
+        return true;
     }
 
     private bool CopyToBufferLocked(Direct3D11CaptureFrame frame, CapturedFrame target)
@@ -245,6 +317,12 @@ internal sealed class WindowCaptureService : IDisposable
         var surface = frame.Surface;
         if (surface is not WinRT.IWinRTObject winrtObject)
         {
+            if (!_loggedQiFailure)
+            {
+                _loggedQiFailure = true;
+                AppLog.Warn($"WGC 表面对象类型异常：{surface?.GetType().FullName ?? "null"}");
+            }
+
             return false;
         }
 
@@ -252,6 +330,12 @@ internal sealed class WindowCaptureService : IDisposable
         int hr = winrtObject.NativeObject.TryAs(typeof(ID3D11Texture2D).GUID, out IntPtr texturePointer);
         if (hr < 0 || texturePointer == IntPtr.Zero)
         {
+            if (!_loggedQiFailure)
+            {
+                _loggedQiFailure = true;
+                AppLog.Warn($"WGC QI ID3D11Texture2D 失败：hr=0x{hr:X8} ptr=0x{texturePointer.ToInt64():X}");
+            }
+
             return false;
         }
 
@@ -278,10 +362,13 @@ internal sealed class WindowCaptureService : IDisposable
 
     private void OnItemClosed(GraphicsCaptureItem sender, object args)
     {
-        if (!_disposed)
+        if (_disposed)
         {
-            SourceClosed?.Invoke();
+            return;
         }
+
+        AppLog.Info("WGC 源窗口已关闭（Item.Closed）");
+        SourceClosed?.Invoke();
     }
 
     public void Dispose()
@@ -333,6 +420,8 @@ internal sealed class WindowCaptureService : IDisposable
             _context = null;
             _device?.Dispose();
             _device = null;
+
+            AppLog.Info($"WGC 已停止：收到帧回调 {_frameCount} 次，交付 UI {_deliveredCount} 帧");
         }
     }
 

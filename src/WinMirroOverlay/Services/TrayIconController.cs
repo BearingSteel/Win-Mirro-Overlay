@@ -56,6 +56,9 @@ internal sealed class TrayIconController : IDisposable
         var reselectItem = new ToolStripMenuItem("重新选择源窗口");
         reselectItem.Click += (_, _) => ReselectRequested?.Invoke();
 
+        var logItem = new ToolStripMenuItem("打开日志文件夹");
+        logItem.Click += (_, _) => LogFolderRequested?.Invoke();
+
         var exitItem = new ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitRequested?.Invoke();
 
@@ -68,6 +71,7 @@ internal sealed class TrayIconController : IDisposable
             opacityMenu,
             new ToolStripSeparator(),
             reselectItem,
+            logItem,
             exitItem,
         });
 
@@ -98,6 +102,8 @@ internal sealed class TrayIconController : IDisposable
     public event Action<int>? OpacitySelected;
 
     public event Action? ReselectRequested;
+
+    public event Action? LogFolderRequested;
 
     public event Action? ExitRequested;
 
